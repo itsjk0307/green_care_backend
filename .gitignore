@@ -1,0 +1,15 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.DS_Store
+
+# Uploaded media (keep folder structure)
+storage/images/
+storage/maps/*
+!storage/maps/.gitkeep
