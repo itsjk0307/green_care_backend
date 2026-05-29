@@ -7,6 +7,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -14,6 +15,8 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
+from app.db.diagnostics import fetch_runtime_database_info, mask_database_url
+from app.db.session import engine
 from app.models.user import User
 from app.schemas.auth import TokenResponse
 from app.schemas.user import UserCreate, UserResponse
@@ -44,6 +47,13 @@ async def register_user(db: AsyncSession, user_data: UserCreate) -> UserResponse
     db.add(user)
     await db.commit()
     await db.refresh(user)
+
+    db_info = await fetch_runtime_database_info(engine)
+    print(
+        f"[REGISTER] Committed user id={user.id} email={user.email} "
+        f"to database={db_info['database']!r} port={db_info['port']} "
+        f"(DATABASE_URL={mask_database_url(settings.DATABASE_URL)})"
+    )
 
     return UserResponse.model_validate(user)
 

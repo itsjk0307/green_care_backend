@@ -7,6 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
+from app.core.config import settings
+from app.db.diagnostics import mask_database_url, parse_database_url
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.auth import LoginRequest
@@ -64,9 +66,17 @@ async def register(
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        print(f"[REGISTER] Attempt: {request.email}")
+        target = parse_database_url(settings.DATABASE_URL)
+        print(
+            f"[REGISTER] Attempt: {request.email} "
+            f"target_db={target['database']!r} host={target['host']} port={target['port']} "
+            f"url={mask_database_url(settings.DATABASE_URL)}"
+        )
         result = await auth_service.register_user(db, request)
-        print(f"[REGISTER] Success: {request.email}")
+        print(
+            f"[REGISTER] Success: {request.email} id={result.id} "
+            f"(check public.users in database {target['database']!r} on port {target['port']})"
+        )
         return {
             "success": True,
             "message": "User registered successfully",

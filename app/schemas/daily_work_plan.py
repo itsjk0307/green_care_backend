@@ -108,3 +108,30 @@ class DailyWorkPlanResponse(BaseModel):
 class DailyWorkPlanListResponse(BaseModel):
     items: list[DailyWorkPlanResponse]
     total: int
+
+
+class DailyPlanWorkerAssignment(BaseModel):
+    worker_id: UUID
+    worker_name: str
+    worker_role: str
+    assigned_zones: list[str]
+
+
+class DailyPlanHistoryItem(BaseModel):
+    id: UUID
+    plan_date: date
+    status: str
+    weather: str
+    total_tasks: int
+    completed_tasks: int
+    completion_pct: float
+    total_workers: int
+
+
+class DailyPlanStatsResponse(BaseModel):
+    total_plans: int
+    avg_completion_pct: float
+    total_worker_days: int
+    most_common_zone: str
+    most_common_task: str
+    plans_by_status: dict[str, int]

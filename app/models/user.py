@@ -57,15 +57,10 @@ class User(Base):
         back_populates="reviewer",
         foreign_keys="WorkReport.approved_by",
     )
-    uploaded_detection_reports: Mapped[list["DetectionReport"]] = relationship(
-        "DetectionReport",
+    uploaded_drone_scans: Mapped[list["DroneScan"]] = relationship(
+        "DroneScan",
         back_populates="uploader",
-        foreign_keys="DetectionReport.uploaded_by",
-    )
-    reviewed_detection_reports: Mapped[list["DetectionReport"]] = relationship(
-        "DetectionReport",
-        back_populates="reviewer",
-        foreign_keys="DetectionReport.approved_by",
+        foreign_keys="DroneScan.uploaded_by",
     )
     created_daily_work_plans: Mapped[list["DailyWorkPlan"]] = relationship(
         "DailyWorkPlan",
@@ -76,5 +71,20 @@ class User(Base):
         "DailyWorkerAttendance",
         back_populates="worker",
         foreign_keys="DailyWorkerAttendance.worker_id",
+    )
+    notifications: Mapped[list["Notification"]] = relationship(
+        "Notification",
+        back_populates="user",
+        foreign_keys="Notification.user_id",
+    )
+    reported_issues: Mapped[list["Issue"]] = relationship(
+        "Issue",
+        back_populates="reporter",
+        foreign_keys="Issue.reported_by",
+    )
+    assigned_issues: Mapped[list["Issue"]] = relationship(
+        "Issue",
+        back_populates="assignee",
+        foreign_keys="Issue.assigned_to",
     )
 

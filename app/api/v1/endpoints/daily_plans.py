@@ -11,6 +11,9 @@ from app.db.session import get_db
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.schemas.daily_work_plan import (
+    DailyPlanHistoryItem,
+    DailyPlanStatsResponse,
+    DailyPlanWorkerAssignment,
     DailyWorkPlanCreate,
     DailyWorkPlanResponse,
     DailyWorkPlanUpdate,
@@ -23,8 +26,12 @@ from app.services.daily_plan_service import (
     add_zone_task,
     create_daily_plan,
     get_daily_plan,
+    get_daily_plan_history,
+    get_daily_plan_stats,
+    get_plan_workers,
     get_today_plan,
     list_daily_plans,
+    publish_daily_plan,
     save_attendance,
     update_daily_plan,
     update_zone_task_status,
@@ -85,6 +92,24 @@ async def save_attendance_endpoint(
     )
 
 
+@router.post(
+    "/{plan_id}/publish",
+    response_model=ApiResponse[DailyWorkPlanResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def publish_daily_plan_endpoint(
+    plan_id: uuid.UUID,
+    _: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[DailyWorkPlanResponse]:
+    updated = await publish_daily_plan(db=db, plan_id=plan_id)
+    return ApiResponse[DailyWorkPlanResponse](
+        success=True,
+        message="Daily work plan published successfully.",
+        data=updated,
+    )
+
+
 @router.get("/today", response_model=ApiResponse[DailyWorkPlanResponse], status_code=status.HTTP_200_OK)
 async def get_today_plan_endpoint(
     course_id: uuid.UUID = Query(...),
@@ -96,6 +121,50 @@ async def get_today_plan_endpoint(
         success=True,
         message="Today's daily plan fetched successfully.",
         data=plan,
+    )
+
+
+@router.get(
+    "/history",
+    response_model=ApiResponse[list[DailyPlanHistoryItem]],
+    status_code=status.HTTP_200_OK,
+)
+async def get_daily_plan_history_endpoint(
+    course_id: uuid.UUID = Query(...),
+    from_date: date | None = Query(default=None, alias="from_date"),
+    to_date: date | None = Query(default=None, alias="to_date"),
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[list[DailyPlanHistoryItem]]:
+    history = await get_daily_plan_history(
+        db=db,
+        course_id=course_id,
+        from_date=from_date,
+        to_date=to_date,
+    )
+    return ApiResponse[list[DailyPlanHistoryItem]](
+        success=True,
+        message="Daily plan history fetched successfully.",
+        data=history,
+    )
+
+
+@router.get(
+    "/stats",
+    response_model=ApiResponse[DailyPlanStatsResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def get_daily_plan_stats_endpoint(
+    course_id: uuid.UUID = Query(...),
+    month: str = Query(..., description="Month in YYYY-MM format"),
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[DailyPlanStatsResponse]:
+    stats = await get_daily_plan_stats(db=db, course_id=course_id, month=month)
+    return ApiResponse[DailyPlanStatsResponse](
+        success=True,
+        message="Daily plan statistics fetched successfully.",
+        data=stats,
     )
 
 
@@ -119,6 +188,24 @@ async def list_daily_plans_endpoint(
         success=True,
         message="Daily plans fetched successfully.",
         data=plans,
+    )
+
+
+@router.get(
+    "/{plan_id}/workers",
+    response_model=ApiResponse[list[DailyPlanWorkerAssignment]],
+    status_code=status.HTTP_200_OK,
+)
+async def get_plan_workers_endpoint(
+    plan_id: uuid.UUID,
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[list[DailyPlanWorkerAssignment]]:
+    workers = await get_plan_workers(db=db, plan_id=plan_id)
+    return ApiResponse[list[DailyPlanWorkerAssignment]](
+        success=True,
+        message="Plan workers fetched successfully.",
+        data=workers,
     )
 
 

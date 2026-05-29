@@ -15,9 +15,11 @@ import app.models.golf_course  # noqa: F401
 import app.models.report  # noqa: F401
 import app.models.user  # noqa: F401
 import app.models.work_report  # noqa: F401
-import app.models.detection_report  # noqa: F401
 import app.models.work_area  # noqa: F401
 import app.models.daily_work_plan  # noqa: F401
+import app.models.drone_scan  # noqa: F401
+import app.models.notification  # noqa: F401
+import app.models.issue  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)

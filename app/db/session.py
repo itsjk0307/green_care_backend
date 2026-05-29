@@ -7,12 +7,16 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.config import settings
+from app.db.diagnostics import mask_database_url
 
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
     future=True,
 )
+
+# Log once at import so misconfigured DATABASE_URL is obvious in the console.
+print(f"[db] Engine URL: {mask_database_url(settings.DATABASE_URL)}")
 
 SessionLocal = async_sessionmaker(
     bind=engine,

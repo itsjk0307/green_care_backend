@@ -4,7 +4,8 @@ import logging
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+import aiofiles
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +13,12 @@ from app.core.dependencies import get_current_strict_admin, get_current_user
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.common import ApiResponse
-from app.schemas.golf_course import GolfCourseCreate, GolfCourseResponse, GolfCourseUpdate
+from app.schemas.golf_course import (
+    CourseMapUploadResponse,
+    GolfCourseCreate,
+    GolfCourseResponse,
+    GolfCourseUpdate,
+)
 from app.services.golf_course_service import (
     create_course,
     get_all_courses,
@@ -20,6 +26,7 @@ from app.services.golf_course_service import (
     get_course_model_by_id,
     update_course,
 )
+from app.services.storage_service import FIELD_PHOTO_EXTENSIONS, _read_and_validate, _storage_root
 
 router = APIRouter(prefix="/courses", tags=["courses"])
 logger = logging.getLogger(__name__)
@@ -81,6 +88,55 @@ async def get_course_map(
     return FileResponse(
         path=map_path,
         media_type="image/jpeg",
+    )
+
+
+@router.post(
+    "/{course_id}/map",
+    response_model=ApiResponse[CourseMapUploadResponse],
+    status_code=200,
+)
+async def upload_course_map(
+    course_id: uuid.UUID,
+    map_image: UploadFile = File(...),
+    _: User = Depends(get_current_strict_admin),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[CourseMapUploadResponse]:
+    course = await get_course_model_by_id(db, course_id)
+    if course is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Golf course not found.")
+
+    original_filename = map_image.filename or ""
+    content = await _read_and_validate(map_image, FIELD_PHOTO_EXTENSIONS, label="map image")
+
+    maps_dir = _storage_root() / "maps"
+    os.makedirs(str(maps_dir), exist_ok=True)
+
+    saved_name = f"{course_id}.jpg"
+    try:
+        async with aiofiles.open(maps_dir / saved_name, "wb") as out:
+            await out.write(content)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save map image to storage.",
+        ) from exc
+
+    course.map_image_path = saved_name
+    await db.commit()
+    await db.refresh(course)
+
+    map_url = f"/storage/maps/{saved_name}"
+    logger.info("Uploaded map for course id=%s -> %s", course_id, map_url)
+
+    return ApiResponse[CourseMapUploadResponse](
+        success=True,
+        message="Course map uploaded successfully.",
+        data=CourseMapUploadResponse(
+            course_id=str(course_id),
+            map_url=map_url,
+            filename=original_filename,
+        ),
     )
 
 

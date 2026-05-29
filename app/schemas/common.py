@@ -10,6 +10,9 @@ class HealthCheckData(BaseModel):
     version: str
     modules: list[str]
     database: str
+    database_name: str | None = None
+    database_port: int | None = None
+    database_url_masked: str | None = None
 
 
 class ApiResponse(BaseModel, Generic[T]):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,32 +12,55 @@ from app.db.session import get_db
 from app.models.user import User
 from app.schemas.common import ApiResponse
 from app.schemas.work_report import (
+    FieldPhotoResponse,
     WorkReportComplete,
     WorkReportCreate,
     WorkReportListResponse,
     WorkReportResponse,
     WorkReportStatusUpdate,
 )
+from app.services.storage_service import save_field_photo, save_report_image
 from app.services.work_report_service import (
     complete_work_report,
+    create_field_photo_report,
     create_work_report,
+    get_field_photos,
     get_work_report_by_id,
     get_work_reports,
     update_work_report_status,
 )
-from app.services.storage_service import save_image
 
 router = APIRouter(prefix="/work-reports", tags=["work-reports"])
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _parse_work_types(raw: str) -> list[str]:
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="work_types must be valid JSON, e.g. [\"mowing\",\"watering\"].",
+        ) from exc
+    if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="work_types must be a JSON array of strings.",
+        )
+    return parsed
+
+
 def _parse_json_array_objects(value: str | None, field_name: str) -> list[dict] | None:
-    if value is None or value.strip() == "":
+    if not value or not value.strip():
         return None
     try:
         parsed = json.loads(value)
-    except json.JSONDecodeError as err:
+    except json.JSONDecodeError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid JSON for {field_name}.",
-        ) from err
+        ) from exc
     if parsed is None:
         return None
     if not isinstance(parsed, list):
@@ -52,68 +76,37 @@ def _parse_json_array_objects(value: str | None, field_name: str) -> list[dict] 
     return parsed
 
 
-def _parse_work_types_json(raw: str) -> list[str]:
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as err:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="work_types must be valid JSON.",
-        ) from err
-    if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="work_types must be a JSON array of strings.",
-        )
-    return parsed
+# ── POST /work-reports/ ──────────────────────────────────────────────────────
+# Create a new work report (before photo + GPS + map pin).
 
-
-def _parse_gps_route_json(raw: str | None) -> list[dict] | None:
-    if raw is None or raw.strip() == "":
-        return None
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as err:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="gps_route must be valid JSON.",
-        ) from err
-    if not isinstance(parsed, list):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="gps_route must be a JSON array.",
-        )
-    if not all(isinstance(item, dict) for item in parsed):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="gps_route must be a JSON array of objects.",
-        )
-    return parsed
-
-
-@router.post("/", response_model=ApiResponse[WorkReportResponse], status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    response_model=ApiResponse[WorkReportResponse],
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_work_report_endpoint(
     course_id: uuid.UUID = Form(...),
     work_types: str = Form(
         ...,
         description='JSON array of work type keys, e.g. ["mowing","watering"]',
     ),
+    notes: str | None = Form(default=None),
+    gps_latitude: float | None = Form(default=None),
+    gps_longitude: float | None = Form(default=None),
+    pin_x: float | None = Form(default=None),
+    pin_y: float | None = Form(default=None),
     zone_coordinates: str | None = Form(
         default=None,
         description="Optional JSON array of coordinate objects",
     ),
-    gps_latitude: float | None = Form(default=None),
-    gps_longitude: float | None = Form(default=None),
     mark_type: str | None = Form(default=None),
-    pin_x: float | None = Form(default=None),
-    pin_y: float | None = Form(default=None),
-    notes: str | None = Form(default=None),
-    before_image: UploadFile = File(...),
+    before_image: Optional[UploadFile] = File(default=None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ApiResponse[WorkReportResponse]:
-    wt_list = _parse_work_types_json(work_types)
+    wt_list = _parse_work_types(work_types)
     zc = _parse_json_array_objects(zone_coordinates, "zone_coordinates")
+
     payload = WorkReportCreate.model_validate(
         {
             "course_id": course_id,
@@ -127,7 +120,11 @@ async def create_work_report_endpoint(
             "notes": notes,
         }
     )
-    before_path = await save_image(before_image, folder="work_reports")
+
+    before_path = ""
+    if before_image is not None and before_image.filename:
+        before_path = await save_report_image(before_image, suffix="_before")
+
     created = await create_work_report(
         db=db,
         worker_id=current_user.id,
@@ -149,41 +146,78 @@ async def create_work_report_endpoint(
     )
 
 
+# ── POST /work-reports/field-photo ───────────────────────────────────────────
+# Quick GPS-tagged field photo upload.
+# IMPORTANT: must be defined before /{report_id} to avoid route shadowing.
+
 @router.post(
-    "/{report_id}/complete",
-    response_model=ApiResponse[WorkReportResponse],
-    status_code=status.HTTP_200_OK,
+    "/field-photo",
+    response_model=ApiResponse[FieldPhotoResponse],
+    status_code=status.HTTP_201_CREATED,
 )
-async def complete_work_report_endpoint(
-    report_id: uuid.UUID,
+async def create_field_photo_endpoint(
+    course_id: uuid.UUID = Form(...),
+    gps_latitude: float = Form(...),
+    gps_longitude: float = Form(...),
     notes: str | None = Form(default=None),
-    gps_route: str | None = Form(
-        default=None,
-        description="Optional JSON array of {lat,lng,timestamp} objects",
-    ),
-    after_image: UploadFile = File(...),
+    image: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> ApiResponse[WorkReportResponse]:
-    gr = _parse_gps_route_json(gps_route)
-    complete_payload = WorkReportComplete(notes=notes, gps_route=gr)
-    after_path = await save_image(after_image, folder="work_reports")
-    updated = await complete_work_report(
+) -> ApiResponse[FieldPhotoResponse]:
+    if not image or not image.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="image file is required.",
+        )
+
+    # save_field_photo validates extension (jpg/jpeg/png only) + PIL integrity
+    image_path = await save_field_photo(image)
+
+    created = await create_field_photo_report(
         db=db,
-        report_id=report_id,
         worker_id=current_user.id,
-        after_image_path=after_path,
-        gps_route=complete_payload.gps_route,
-        notes=complete_payload.notes,
+        course_id=course_id,
+        gps_latitude=gps_latitude,
+        gps_longitude=gps_longitude,
+        image_path=image_path,
+        notes=notes,
     )
-    return ApiResponse[WorkReportResponse](
+    return ApiResponse[FieldPhotoResponse](
         success=True,
-        message="Work report marked complete and submitted for review.",
-        data=updated,
+        message="Field photo uploaded successfully.",
+        data=created,
     )
 
 
-@router.get("/", response_model=ApiResponse[WorkReportListResponse], status_code=status.HTTP_200_OK)
+# ── GET /work-reports/field-photos ───────────────────────────────────────────
+# Admin map view: all GPS-tagged field photos for a course.
+# IMPORTANT: must be defined before /{report_id} to avoid route shadowing.
+
+@router.get(
+    "/field-photos",
+    response_model=ApiResponse[list[FieldPhotoResponse]],
+    status_code=status.HTTP_200_OK,
+)
+async def list_field_photos_endpoint(
+    course_id: uuid.UUID = Query(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[list[FieldPhotoResponse]]:
+    photos = await get_field_photos(db=db, course_id=course_id)
+    return ApiResponse[list[FieldPhotoResponse]](
+        success=True,
+        message="Field photos fetched successfully.",
+        data=photos,
+    )
+
+
+# ── GET /work-reports/ ───────────────────────────────────────────────────────
+
+@router.get(
+    "/",
+    response_model=ApiResponse[WorkReportListResponse],
+    status_code=status.HTTP_200_OK,
+)
 async def list_work_reports_endpoint(
     course_id: uuid.UUID | None = Query(default=None),
     status: str | None = Query(default=None),
@@ -208,7 +242,13 @@ async def list_work_reports_endpoint(
     )
 
 
-@router.get("/{report_id}", response_model=ApiResponse[WorkReportResponse], status_code=status.HTTP_200_OK)
+# ── GET /work-reports/{report_id} ────────────────────────────────────────────
+
+@router.get(
+    "/{report_id}",
+    response_model=ApiResponse[WorkReportResponse],
+    status_code=status.HTTP_200_OK,
+)
 async def get_work_report_endpoint(
     report_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
@@ -226,6 +266,54 @@ async def get_work_report_endpoint(
         data=report,
     )
 
+
+# ── POST /work-reports/{report_id}/complete ──────────────────────────────────
+# Worker submits after-photo to mark work complete.
+
+@router.post(
+    "/{report_id}/complete",
+    response_model=ApiResponse[WorkReportResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def complete_work_report_endpoint(
+    report_id: uuid.UUID,
+    notes: str | None = Form(default=None),
+    gps_route: str | None = Form(
+        default=None,
+        description="Optional JSON array of {lat, lng, timestamp} objects",
+    ),
+    after_image: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ApiResponse[WorkReportResponse]:
+    if not after_image or not after_image.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="after_image file is required.",
+        )
+
+    gr = _parse_json_array_objects(gps_route, "gps_route")
+    complete_payload = WorkReportComplete(notes=notes, gps_route=gr)
+
+    # save_report_image validates extension + PIL integrity
+    after_path = await save_report_image(after_image, suffix="_after")
+
+    updated = await complete_work_report(
+        db=db,
+        report_id=report_id,
+        worker_id=current_user.id,
+        after_image_path=after_path,
+        gps_route=complete_payload.gps_route,
+        notes=complete_payload.notes,
+    )
+    return ApiResponse[WorkReportResponse](
+        success=True,
+        message="Work report marked complete and submitted for review.",
+        data=updated,
+    )
+
+
+# ── PATCH /work-reports/{report_id}/status ───────────────────────────────────
 
 @router.patch(
     "/{report_id}/status",

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, String, func
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -26,6 +26,13 @@ class GolfCourse(Base):
         nullable=True,
         comment="Filename of 2D course map image",
     )
+    center_lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    center_lng: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bound_north: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bound_south: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bound_east: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bound_west: Mapped[float | None] = mapped_column(Float, nullable=True)
+    default_zoom: Mapped[int | None] = mapped_column(Integer, nullable=True, default=16)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -36,10 +43,10 @@ class GolfCourse(Base):
         back_populates="course",
         foreign_keys="WorkReport.course_id",
     )
-    detection_reports: Mapped[list["DetectionReport"]] = relationship(
-        "DetectionReport",
+    drone_scans: Mapped[list["DroneScan"]] = relationship(
+        "DroneScan",
         back_populates="course",
-        foreign_keys="DetectionReport.course_id",
+        foreign_keys="DroneScan.course_id",
     )
     work_areas: Mapped[list["WorkArea"]] = relationship(
         "WorkArea",
@@ -50,4 +57,9 @@ class GolfCourse(Base):
         "DailyWorkPlan",
         back_populates="course",
         foreign_keys="DailyWorkPlan.course_id",
+    )
+    issues: Mapped[list["Issue"]] = relationship(
+        "Issue",
+        back_populates="course",
+        foreign_keys="Issue.course_id",
     )

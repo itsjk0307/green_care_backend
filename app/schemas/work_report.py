@@ -21,6 +21,7 @@ ALLOWED_WORK_TYPES: frozenset[str] = frozenset(
         "hole_setting",
         "snow_removal",
         "admin_work",
+        "field_photo",
     }
 )
 
@@ -98,5 +99,18 @@ class WorkReportListResponse(BaseModel):
     total: int
     page: int
     limit: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FieldPhotoResponse(BaseModel):
+    id: UUID
+    worker_name: str
+    gps_latitude: float | None
+    gps_longitude: float | None
+    image_url: str
+    notes: str | None
+    created_at: datetime
+    status: WorkReportStatusLiteral
 
     model_config = ConfigDict(from_attributes=True)

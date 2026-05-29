@@ -34,3 +34,9 @@ class GolfCourseResponse(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CourseMapUploadResponse(BaseModel):
+    course_id: str
+    map_url: str
+    filename: str
